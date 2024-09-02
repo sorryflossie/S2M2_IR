@@ -17,15 +17,12 @@
 ESP32Encoder right_encoder;
 ESP32Encoder left_encoder;
 
-uint8_t centerHubAddress[] = {0x8C, 0xCE, 0x4E, 0xBB, 0x4C, 0x6c};
-//centralhub mac: 8c:ce:4e:bb:4c:6c
+
+//centralhub mac: 8C:CE:4E:BB:4C:78
 
 // WiFi network name and password:
 const char* networkName = "MSc_IoT"; // replace with your network id
 const char* networkPswd = "MSc_IoT@UCL"; // replace with your network password
-
-// const char* networkName = "SKY2YBBC";
-// const char* networkPswd = "Kvqtx2X6bixq";
 
 // IP address to send UDP data to:
 // either use the ip address of the server or
@@ -69,17 +66,12 @@ float control_R=0, control_L=0, control = 0;
 float intError = 0;
 bool read_flag = true;
 
-// Sensor and State Variables
-bool IR_values[5] = {false, false, false, false, false}; // IR sensor values
-int threshold = 35; // IR sensor detection threshold
-int state, old_state;
 
 typedef struct struct_message {
   char ID[32];              // 标识符
   float position[3];   // 位置，包含X, Y, Z坐标
   float headingY;// Y方向的朝向
   float position_d[3];  //目标地址    
-  bool IR_states[5];      // IR sensor states
 } struct_message;
 
 struct_message myData;
@@ -108,7 +100,6 @@ void setup(){
     }
 
     esp_now_register_recv_cb(OnDataRecv);
-    esp_now_register_send_cb(OnDataSent);
 
 
   right_encoder.attachHalfQuad ( Mot_right_feedback, Mot_right_feedback_2 );
@@ -124,14 +115,48 @@ void setup(){
   right_old_pos = 0;
   left_old_pos = 0;
 
-  state = 0;
-  old_state = 0;
-
-  bool phaseTwo = false;
-
   delay(5000);
 }
 
+void connectToWiFi(const char* ssid, const char* pwd) {
+  Serial.println("Connecting to WiFi network: " + String(ssid));
+
+  // delete old config
+  WiFi.disconnect(true);
+  // register event handler
+  WiFi.onEvent(WiFiEvent);
+
+  // Initiate connection
+  WiFi.begin(ssid, pwd);
+
+  Serial.println("Waiting for WIFI connection...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(100);
+  }
+}
+
+// Wifi event handler
+void WiFiEvent(WiFiEvent_t event) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      // Initializes the UDP state
+      // This initializes the transfer buffer
+      udp.begin(WiFi.localIP(), udpPort);
+      connected = true;
+      WiFi.setTxPower(WIFI_POWER_19_5dBm);
+      // When connected set
+      Serial.print("WiFi connected! IP address: ");
+      Serial.println(WiFi.localIP());
+      break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.println("WiFi lost connection");
+      udp.stop();
+      udp.flush();
+      connected = false;
+      break;
+    default: break;
+  }
+}
 
 void disp(){
   Serial.print("Mona :");
@@ -165,9 +190,6 @@ void disp(){
   Serial.print("\t Z_d :");
   Serial.print(Z_d);
   Serial.println();
-  Serial.print("\t phaseTwo :");
-  Serial.print(phaseTwo);
-  Serial.println();
 }
 
 //void OnDataRecv(const esp_now_recv_info_t* info, const uint8_t *incomingData, int len) {
@@ -185,37 +207,37 @@ void OnDataRecv(const uint8_t *mac,const uint8_t *incomingData, int len) {
       Y_d=myData.position_d[1];
       Z_d=myData.position_d[2];
 
-      // Serial.print("Bot_Id:");
-      // Serial.print(Bot_Id);
-      // Serial.print(" ");
+      Serial.print("Bot_Id:");
+      Serial.print(Bot_Id);
+      Serial.print(" ");
 
-      // Serial.print("X: ");
-      // Serial.print(X);
-      // Serial.print(" ");
+      Serial.print("X: ");
+      Serial.print(X);
+      Serial.print(" ");
 
-      // Serial.print("Y: ");
-      // Serial.print(Y);
-      // Serial.print(" ");
+      Serial.print("Y: ");
+      Serial.print(Y);
+      Serial.print(" ");
 
-      // Serial.print("Z: ");
-      // Serial.print(Z);
-      // Serial.print(" ");
+      Serial.print("Z: ");
+      Serial.print(Z);
+      Serial.print(" ");
 
-      // Serial.print("Orientation:");
-      // Serial.print(Orientation);
-      // Serial.print(" ");
+      Serial.print("Orientation:");
+      Serial.print(Orientation);
+      Serial.print(" ");
 
-      // Serial.print("X_d:");
-      // Serial.print(X_d);
-      // Serial.print(" ");
+      Serial.print("X_d:");
+      Serial.print(X_d);
+      Serial.print(" ");
 
-      // Serial.print("Y_d:");
-      // Serial.print(Y_d);
-      // Serial.print(" ");
+      Serial.print("Y_d:");
+      Serial.print(Y_d);
+      Serial.print(" ");
 
-      // Serial.print("Z_d:");
-      // Serial.println(Z_d);
-      // Serial.print(" ");
+      Serial.print("Z_d:");
+      Serial.println(Z_d);
+      Serial.print(" ");
     } else {
         Serial.println("Received data size does not match!");
     }
@@ -332,30 +354,8 @@ void loop(){
     
    
     float distanceToTarget = sqrt(pow(X_d - X, 2) + pow(Z_d - Z, 2));
-
-      // Read IR sensors
-    IR_values[0] = Detect_object(1, threshold);
-    IR_values[1] = Detect_object(2, threshold);
-    IR_values[2] = Detect_object(3, threshold);
-    IR_values[3] = Detect_object(4, threshold);
-    IR_values[4] = Detect_object(5, threshold);
-
-    // Determine robot state based on IR sensor readings
-    if (IR_values[2] || IR_values[3] || IR_values[4]) {
-      state = 1; // Obstacle detected in front
-    } else if (IR_values[0]) {
-      state = 3; // Obstacle on the left
-    } else if (IR_values[4]) {
-      state = 2; // Obstacle on the right
-    } else {
-      state = 0; // No obstacles
-    }
-
-    sendDataToHub();
-
     
     if (phaseTwo) {
-        Serial.println(distanceToTarget);
         if (distanceToTarget > stopThreshold) {
             // Propotional_XY(X_d, Z_d, X, Z, 0.2);
             Propotional_XY(X_d, Z_d, X, Z, 0.01);
@@ -364,13 +364,7 @@ void loop(){
             //stop
             control_lin = 0;
             control_theta = 0;
-            Motors_stop();
-            phaseTwo=false;
-            
-            Serial.println("stop");
-            disp();
-            delay(2000);
-            
+            done=true;
         }
     } else {
         // phase one:turning
@@ -378,7 +372,7 @@ void loop(){
             phaseTwo = true;
             // Propotional_XY(X_d, Z_d, X, Z, 0.2);
         } else {
-            Propotional_theta(theta_d, Orientation, -0.5);//-0.1
+            Propotional_theta(theta_d, Orientation, -0.1);
             control_lin = 0.01;
         }
     }
@@ -393,32 +387,6 @@ void loop(){
 }
 }
 
-
-
-void sendDataToHub() {
-  strcpy(myData.ID, Bot_Id);
-  myData.position[0] = X;
-  myData.position[1] = Y;
-  myData.position[2] = Z;
-  myData.headingY = Orientation;
-  myData.position_d[0] = X_d;
-  myData.position_d[1] = Y_d;
-  myData.position_d[2] = Z_d;
-
-  // Copy IR states to struct
-  for (int i = 0; i < 5; i++) {
-    myData.IR_states[i] = IR_values[i];
-  }
-
-  // Send data via ESP-NOW
-  esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
-}
-
-void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  Serial.print("\r\nLast Packet Send Status:\t");
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
-}
-
 void Control_law()
 {
 // if(abs(control_lin)<0.01 && abs(control_theta<0.01)){
@@ -429,29 +397,29 @@ if (done==false){
       Propotional(-right_ref_vel, -right_vel,-75/right_ref_vel);
       control_R = control+25;
       Right_mot_backward(control_R);
-      // Serial.print("right down: ");
-      // Serial.println(control_R);
+      Serial.print("right down: ");
+      Serial.println(control_R);
   }
   else{
     Propotional(right_ref_vel, right_vel,75/right_ref_vel);
     control_R = control+25;
     Right_mot_forward(control_R);
-    // Serial.print("right up: ");
-    // Serial.println(control_R);
+    Serial.print("right up: ");
+    Serial.println(control_R);
   }
   if (left_ref_vel<0){
     Propotional(-left_ref_vel,-left_vel,-75/(left_ref_vel));
     control_L = control+25;
     Left_mot_backward(control_L);
-    // Serial.print("left down: ");
-    // Serial.println(control_L);
+    Serial.print("left down: ");
+    Serial.println(control_L);
   }
   else{
     Propotional(left_ref_vel,left_vel,75/(left_ref_vel));
     control_L = control+25;
     Left_mot_forward(control_L);
-    // Serial.print("left up: ");
-    // Serial.println(control_L);
+    Serial.print("left up: ");
+    Serial.println(control_L);
   }
 }
 else{
